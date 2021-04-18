@@ -14,45 +14,112 @@ interface IProps extends IControlledScrollableArea {
   fullHeight: number;
 }
 
-interface IState {
-  isScrollbarsShow: boolean;
+const getNewTouchPoint = (touches: TouchList | React.TouchList) => {
+  let x = 0
+  let y = 0
+  for (let i = 0; i < touches.length; i++) {
+    x += touches.item(i).screenX
+    y += touches.item(i).screenY
+  }
+  x = Math.floor(x / touches.length)
+  y = Math.floor(y / touches.length)
+  return { x, y }
 }
 
-export default class ScrollableArea extends React.PureComponent<IProps, IState> {
-  ref: React.RefObject<HTMLDivElement> = React.createRef()
+export default class ScrollableArea extends React.PureComponent<IProps> {
+  static defaultProps = {
+    fingersToScroll: 1,
+  }
 
-  isScrolling: boolean = false
-  scrollDirectoion: ScrollDirectionType = null
-  deltaX: number = 0
-  deltaY: number = 0
+  private ref: React.RefObject<HTMLDivElement> = React.createRef()
 
-  state = { isScrollbarsShow: false }
+  private _isScrolling: boolean = false
+  private _deltaX: number = 0
+  private _deltaY: number = 0
 
-  turnScrollbarsOn = () => this.setState({ isScrollbarsShow: true })
-  turnScrollbarsOff = () => this.setState({ isScrollbarsShow: false })
+  private _touchX: number = 0
+  private _touchY: number = 0
+  private _scrollXSpeed: number = 0
+  private _scrollYSpeed: number = 0
+  private _inertionTimeout: number = null
+
+  private _shiftKeyPressed: boolean = false
+
+  componentWillUnmount() {
+    window.removeEventListener('touchmove', this.onTouchMove)
+    window.removeEventListener('touchend', this.onTouchEnd)
+  }
+
+  onKeyDown = (event: React.KeyboardEvent) => {
+    if (event.nativeEvent.code === 'Space') {
+      this._deltaY = this.props.height
+      this._immediateScroll()
+    }
+  }
+
+  onTouchStart = (event: React.TouchEvent) => {
+    event.preventDefault()
+    const { touches } = event
+    this._scrollXSpeed = this._scrollYSpeed = 0
+    if (this.props.fingersToScroll === touches.length) {
+      const { x, y } = getNewTouchPoint(touches)
+      this._touchX = x
+      this._touchY = y
+      
+      window.addEventListener('touchmove', this.onTouchMove)
+      window.addEventListener('touchend', this.onTouchEnd)
+    } else {
+      this.onTouchEnd()
+    }
+  }
+
+  onTouchMove = (event: TouchEvent) => {
+    event.preventDefault()
+    const { touches } = event
+    const { x, y } = getNewTouchPoint(touches)
+    this._scrollHandler({
+      deltaX: this._touchX - x,
+      deltaY: this._touchY - y,
+    })
+    this._touchX = x
+    this._touchY = y
+  }
+
+  onTouchEnd = () => {
+    window.removeEventListener('touchmove', this.onTouchMove)
+    window.removeEventListener('touchend', this.onTouchEnd)
+    const { scrollSpeed = 1 } = this.props
+    // this._scrollXSpeed = 
+  }
 
   onWheel = (event: React.WheelEvent) => {
     const { deltaX, deltaY } = event
-    this.deltaY += deltaY
-    this.deltaX += deltaX
-    if (!this.isScrolling) {
-      this._scroll()
+    this._scrollHandler({ deltaX, deltaY })
+  }
+
+  private _scrollHandler = ({ deltaX, deltaY }: { deltaX: number, deltaY: number }) => {
+    if (deltaX || deltaY) {
+      this._deltaY += deltaY || 0
+      this._deltaX += deltaX || 0
+      if (!this._isScrolling) {
+        this._scroll()
+      }
     }
   }
 
   private _immediateScroll = () => {
-    if (this.deltaY || this.deltaX) {
+    if (this._deltaY || this._deltaX) {
       let { height, fullHeight, width, fullWidth, scrollTop, scrollLeft, onScroll } = this.props
       if (fullHeight > height) {
-        scrollTop = Math.min(Math.max(scrollTop + this.deltaY, 0), fullHeight - height - 1)
+        scrollTop = Math.min(Math.max(scrollTop + this._deltaY, 0), fullHeight - height - 1)
       }
       if (fullWidth > width) {
-        scrollLeft = Math.min(Math.max(scrollLeft + this.deltaX, 0), fullWidth - width - 1)
+        scrollLeft = Math.min(Math.max(scrollLeft + this._deltaX, 0), fullWidth - width - 1)
       }
-      this.deltaY = this.deltaX = 0
+      this._deltaY = this._deltaX = 0
       onScroll({ scrollTop, scrollLeft })
     }
-    this.isScrolling = false
+    this._isScrolling = false
   }
 
   private _scroll = () => requestAnimationFrame(this._immediateScroll)
@@ -62,18 +129,21 @@ export default class ScrollableArea extends React.PureComponent<IProps, IState> 
     height: `${this.props.height}px`,
     width: `${this.props.width}px`,
     overflow: 'hidden',
+    touchAction: 'none',
+    pointerEvents: 'unset',
   })
 
   getScrollContentStyle = (): React.CSSProperties => ({
     height: `${this.props.fullHeight}px`,
     width: `${this.props.fullWidth}px`,
     position: 'absolute',
+    // transition: 'top 0.1s, left 0.1s',
     top: `${-this.props.scrollTop}px`,
     left: `${-this.props.scrollLeft}px`,
   })
 
   onHorizontalScroll = scrollLeft => {
-    this.deltaX = this.props.scrollLeft - scrollLeft
+    this._deltaX = this.props.scrollLeft - scrollLeft
     this._immediateScroll()
   }
 
@@ -100,7 +170,7 @@ export default class ScrollableArea extends React.PureComponent<IProps, IState> 
   }
 
   onVerticalScroll = scrollTop => {
-    this.deltaY = this.props.scrollTop - scrollTop
+    this._deltaY = this.props.scrollTop - scrollTop
     this._immediateScroll()
   }
   
@@ -131,11 +201,9 @@ export default class ScrollableArea extends React.PureComponent<IProps, IState> 
         role="scroll-area"
         ref={this.ref}
         style={this.getScrollAreaStyle()}
-        onFocus={this.turnScrollbarsOn}
-        onTouchStart={this.turnScrollbarsOn}
-        onBlur={this.turnScrollbarsOff}
-        onTouchEnd={this.turnScrollbarsOff}
+        onTouchStart={this.onTouchStart}
         onWheel={this.onWheel}
+        onKeyDown={this.onKeyDown}
       >
         <div
           role="scroll-content"

@@ -34,4 +34,5 @@ export default interface IScrollableAreaWrapper {
   verticalAutohideTime?: number;
 
   fingersToScroll?: number;
+  scrollSpeed?: number;
 }
